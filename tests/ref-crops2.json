@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Вот описание для каждого из трёх кропов:\n\n**Кроп 1 (верхний):**\n*   **Элементы:** Шапка сайта (логотип Target, меню, поиск, корзина), миниатюрное фото куклы слева, название товара, цена и счётчик количества (+/-).\n*   **Тексты:** «Shop all Monster High», «Monster High Dawn of the Dance Dance Cleo», цена «$32.99».\n*   **Фон:** Белый.\n*   **Особые отметки:** Заголовок **«About this item»** виден внизу кропа, крупным шрифтом по центру, отделяясь от верхней части серой линией.\n\n**Кроп 2 (средний):**\n*   **Элементы:** Заголовок секции «Details», развёрнутый блок с двумя колонками текста («Highlights» и «Description») и списком с буллетами (маркерами).\n*   **Тексты:** Заголовок **«Details»**, подзаголовки **«Highlights»** и **«Description»». Читается начало описания куклы: «Monster High Dawn of the Dance dolls are back...», «Cleo De Nile doll wears...».\n*   **Фон:** Белый.\n\n**Кроп 3 (нижний):**\n*   **Элементы:** Продолжение списка с буллетами (текст обрезан сверху) и кнопка.\n*   **Тексты:** Продолжение пунктов про аксессуары («Her hair shimmers...», «Additional accessories include...»). Внизу слева видна кнопка **«Show more»**.\n*   **Фон:** Белый.\n*   **Особые отметки:** Здесь находится кнопка **«Show more»**. Строка **«Specifications»** на этом кропе не видна (вероятно, находится ниже).",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1791098121,
+  "id": "20261004151515809350e82ac94ffa",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "20261004151515809350e82ac94ffa",
+  "usage": {
+    "completion_tokens": 418,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1184,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1602
+  }
+}

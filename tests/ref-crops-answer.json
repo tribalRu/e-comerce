@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "На основе предоставленных изображений:\n\n**Первый кадр (узкая полоса):**\n*   **Слева:** Кнопка **«Show more»** (в овальной рамке).\n*   **По центру (сверху):** Обрезанный текст, начинающийся с **«...ck for imitation to the dance, of course.»**. Ниже него — ещё одна полупрозрачная/обрезанная строка с неразборчивым текстом.\n*   **Снизу (слева):** Фрагмент текста **«De...»** (вероятно, начало слова «Details» или «Description»), обрезанный нижним краем кадра.\n\n**Второй кадр (белая карточка):**\nКарточка **не начинается** со строки «Details» или заголовка «About this item».  \n**ПЕРВЫМ элементом** сверху внутри белой карточки является строка **«Specifications»** со стрелкой-гамбургером (▼) справа. Ниже неё следуют «Shipping & Returns» и «Q&A».",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1791098043,
+  "id": "2026100415135946ee101e84e246c8",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "2026100415135946ee101e84e246c8",
+  "usage": {
+    "completion_tokens": 239,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 647,
+    "prompt_tokens_details": {
+      "cached_tokens": 2
+    },
+    "total_tokens": 886
+  }
+}

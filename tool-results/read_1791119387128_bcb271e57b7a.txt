@@ -1,0 +1,745 @@
+     1→"use client";
+     2→
+     3→// Отдельная виртуальная страница админки (в том же окне, единый роут `/`):
+     4→//   /?admin=1&edit=new  — создание товара
+     5→//   /?admin=1&edit=<id> — редактирование товара
+     6→// Форма большая и не помещается в боковую панель: слева — карточки секций
+     7→// (основная информация, цена и наличие, характеристики, менеджер фотографий),
+     8→// справа ( десктоп ) — липкий сайдбар: живой предпросмотр карточки товара на
+     9→// витрине, показ в «Хитах продаж» и кнопки Сохранить/Отмена. На мобильных —
+    10→// липкая нижняя панель с кнопками. Уход с несохранёнными изменениями —
+    11→// с подтверждением (AlertDialog).
+    12→
+    13→import { useCallback, useEffect, useMemo, useState } from "react";
+    14→import {
+    15→  ArrowLeft,
+    16→  ImageOff,
+    17→  Loader2,
+    18→  PackageSearch,
+    19→  Save,
+    20→} from "lucide-react";
+    21→import {
+    22→  AlertDialog,
+    23→  AlertDialogAction,
+    24→  AlertDialogCancel,
+    25→  AlertDialogContent,
+    26→  AlertDialogDescription,
+    27→  AlertDialogFooter,
+    28→  AlertDialogHeader,
+    29→  AlertDialogTitle,
+    30→} from "@/components/ui/alert-dialog";
+    31→import { Button } from "@/components/ui/button";
+    32→import {
+    33→  Card,
+    34→  CardContent,
+    35→  CardDescription,
+    36→  CardHeader,
+    37→  CardTitle,
+    38→} from "@/components/ui/card";
+    39→import { Input } from "@/components/ui/input";
+    40→import { Label } from "@/components/ui/label";
+    41→import {
+    42→  Select,
+    43→  SelectContent,
+    44→  SelectItem,
+    45→  SelectTrigger,
+    46→  SelectValue,
+    47→} from "@/components/ui/select";
+    48→import { Skeleton } from "@/components/ui/skeleton";
+    49→import { Switch } from "@/components/ui/switch";
+    50→import { Textarea } from "@/components/ui/textarea";
+    51→import { useToast } from "@/hooks/use-toast";
+    52→import { ProductCard } from "../product-card";
+    53→import { BADGE_LABELS } from "../utils";
+    54→import { ImageManager, uid, type ManagedImage } from "./image-manager";
+    55→import type { CategoryWithCount, Product } from "../types";
+    56→
+    57→const BADGE_OPTIONS = [
+    58→  { value: "none", label: "Без метки" },
+    59→  { value: "hit", label: BADGE_LABELS.hit },
+    60→  { value: "new", label: BADGE_LABELS.new },
+    61→  { value: "sale", label: BADGE_LABELS.sale },
+    62→  { value: "deal", label: BADGE_LABELS.deal },
+    63→];
+    64→
+    65→interface ProductEditPageProps {
+    66→  /** "new" — создание; число — id редактируемого товара */
+    67→  editId: "new" | number;
+    68→  categories: CategoryWithCount[];
+    69→  /** Вернуться к списку товаров (/?admin=1) */
+    70→  onBack: () => void;
+    71→  /** Товар сохранён — перечитать список в панели */
+    72→  onSaved: () => void;
+    73→}
+    74→
+    75→interface FormState {
+    76→  name: string;
+    77→  brand: string;
+    78→  categoryId: string;
+    79→  price: string;
+    80→  oldPrice: string;
+    81→  stock: string;
+    82→  ageMin: string;
+    83→  rating: string;
+    84→  reviewsCount: string;
+    85→  description: string;
+    86→  badge: string;
+    87→  featured: boolean;
+    88→}
+    89→
+    90→const EMPTY_FORM: FormState = {
+    91→  name: "",
+    92→  brand: "КуклаМаркет",
+    93→  categoryId: "",
+    94→  price: "",
+    95→  oldPrice: "",
+    96→  stock: "25",
+    97→  ageMin: "3",
+    98→  rating: "4.5",
+    99→  reviewsCount: "0",
+   100→  description: "",
+   101→  badge: "none",
+   102→  featured: false,
+   103→};
+   104→
+   105→/** Целое из строки с зажимом в диапазон (некорректное → fallback) */
+   106→function toInt(value: string, fallback: number, min: number, max: number): number {
+   107→  const parsed = Number.parseInt(value, 10);
+   108→  if (!Number.isFinite(parsed)) return fallback;
+   109→  return Math.min(max, Math.max(min, parsed));
+   110→}
+   111→
+   112→/** Дробное из строки с зажимом в диапазон и округлением до 1 знака */
+   113→function toNum(value: string, fallback: number, min: number, max: number): number {
+   114→  const parsed = Number.parseFloat(value.replace(",", "."));
+   115→  if (!Number.isFinite(parsed)) return fallback;
+   116→  const clamped = Math.min(max, Math.max(min, parsed));
+   117→  return Math.round(clamped * 10) / 10;
+   118→}
+   119→
+   120→export function ProductEditPage({ editId, categories, onBack, onSaved }: ProductEditPageProps) {
+   121→  const { toast } = useToast();
+   122→  const isNew = editId === "new";
+   123→
+   124→  const [loading, setLoading] = useState(!isNew);
+   125→  const [notFound, setNotFound] = useState(false);
+   126→  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+   127→  const [images, setImages] = useState<ManagedImage[]>([]);
+   128→  const [library, setLibrary] = useState<string[]>([]);
+   129→  const [slug, setSlug] = useState<string | null>(null);
+   130→  const [dirty, setDirty] = useState(false);
+   131→  const [saving, setSaving] = useState(false);
+   132→  const [confirmLeave, setConfirmLeave] = useState(false);
+   133→
+   134→  // Товар для редактирования: грузим с полным набором фотографий
+   135→  useEffect(() => {
+   136→    if (isNew) return;
+   137→    let cancelled = false;
+   138→    setLoading(true);
+   139→    setNotFound(false);
+   140→    fetch(`/api/products/${editId}`)
+   141→      .then(async (res) => {
+   142→        if (!res.ok) throw new Error("not found");
+   143→        return (await res.json()) as Product;
+   144→      })
+   145→      .then((data) => {
+   146→        if (cancelled) return;
+   147→        setForm({
+   148→          name: data.name,
+   149→          brand: data.brand,
+   150→          categoryId: String(data.categoryId),
+   151→          price: String(data.price),
+   152→          oldPrice: data.oldPrice != null ? String(data.oldPrice) : "",
+   153→          stock: String(data.stock),
+   154→          ageMin: String(data.ageMin),
+   155→          rating: String(data.rating),
+   156→          reviewsCount: String(data.reviewsCount),
+   157→          description: data.description,
+   158→          badge: data.badge ?? "none",
+   159→          featured: data.featured,
+   160→        });
+   161→        setImages(
+   162→          (data.images ?? []).map((image) => ({
+   163→            key: uid(),
+   164→            url: image.url,
+   165→            preview: image.url,
+   166→            isMain: image.isMain,
+   167→          })),
+   168→        );
+   169→        setSlug(data.slug);
+   170→        setLoading(false);
+   171→      })
+   172→      .catch(() => {
+   173→        if (!cancelled) {
+   174→          setNotFound(true);
+   175→          setLoading(false);
+   176→        }
+   177→      });
+   178→    return () => {
+   179→      cancelled = true;
+   180→    };
+   181→  }, [editId, isNew]);
+   182→
+   183→  // Библиотека фото магазина
+   184→  useEffect(() => {
+   185→    fetch("/api/images")
+   186→      .then((res) => (res.ok ? res.json() : Promise.reject(new Error())))
+   187→      .then((data: string[]) => setLibrary(data))
+   188→      .catch(() => {});
+   189→  }, []);
+   190→
+   191→  const set = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
+   192→    setForm((prev) => ({ ...prev, [key]: value }));
+   193→    setDirty(true);
+   194→  }, []);
+   195→
+   196→  // Изменения менеджера фотографий помечают форму «грязной»
+   197→  const updateImages = useCallback((action: React.SetStateAction<ManagedImage[]>) => {
+   198→    setImages(action);
+   199→    setDirty(true);
+   200→  }, []);
+   201→
+   202→  const requestBack = useCallback(() => {
+   203→    if (dirty) {
+   204→      setConfirmLeave(true);
+   205→    } else {
+   206→      onBack();
+   207→    }
+   208→  }, [dirty, onBack]);
+   209→
+   210→  const handleSave = async () => {
+   211→    const name = form.name.trim();
+   212→    const description = form.description.trim();
+   213→    const price = Number(form.price.replace(",", "."));
+   214→    const categoryId = Number.parseInt(form.categoryId, 10);
+   215→    const oldPriceRaw = form.oldPrice.trim();
+   216→
+   217→    if (!name) {
+   218→      toast({ title: "Введите название", description: "Оно видно в каталоге и на странице товара" });
+   219→      return;
+   220→    }
+   221→    if (!description) {
+   222→      toast({ title: "Добавьте описание", description: "Описание показывается в «Об этом товаре»" });
+   223→      return;
+   224→    }
+   225→    if (!Number.isFinite(price) || price < 1) {
+   226→      toast({ title: "Укажите цену", description: "Цена — целое число в рублях" });
+   227→      return;
+   228→    }
+   229→    if (!Number.isInteger(categoryId) || categoryId < 1) {
+   230→      toast({ title: "Выберите категорию" });
+   231→      return;
+   232→    }
+   233→    if (images.length === 0) {
+   234→      toast({
+   235→        title: "Добавьте хотя бы одно фото",
+   236→        description: "Загрузите с компьютера или выберите из библиотеки магазина",
+   237→      });
+   238→      return;
+   239→    }
+   240→    if (images.some((image) => image.url === null)) {
+   241→      toast({ title: "Дождитесь окончания загрузки фото" });
+   242→      return;
+   243→    }
+   244→
+   245→    let oldPrice: number | null = null;
+   246→    if (oldPriceRaw !== "") {
+   247→      const parsed = Number(oldPriceRaw.replace(",", "."));
+   248→      if (!Number.isFinite(parsed) || parsed <= price) {
+   249→        toast({
+   250→          title: "Проверьте старую цену",
+   251→          description: "Она должна быть больше текущей — или оставьте поле пустым",
+   252→        });
+   253→        return;
+   254→      }
+   255→      oldPrice = Math.round(parsed);
+   256→    }
+   257→
+   258→    const payload = {
+   259→      name,
+   260→      brand: form.brand.trim() || "КуклаМаркет",
+   261→      categoryId,
+   262→      price: Math.round(price),
+   263→      oldPrice,
+   264→      stock: toInt(form.stock, 25, 0, 100_000),
+   265→      ageMin: toInt(form.ageMin, 3, 0, 18),
+   266→      rating: toNum(form.rating, 4.5, 0, 5),
+   267→      reviewsCount: toInt(form.reviewsCount, 0, 0, 1_000_000),
+   268→      description,
+   269→      badge: form.badge === "none" ? null : form.badge,
+   270→      featured: form.featured,
+   271→      images: images.map((image) => ({ url: image.url as string, isMain: image.isMain })),
+   272→    };
+   273→
+   274→    setSaving(true);
+   275→    try {
+   276→      const res = await fetch(isNew ? "/api/products" : `/api/products/${editId}`, {
+   277→        method: isNew ? "POST" : "PUT",
+   278→        headers: { "Content-Type": "application/json" },
+   279→        body: JSON.stringify(payload),
+   280→      });
+   281→      if (res.ok) {
+   282→        setDirty(false);
+   283→        toast({
+   284→          title: isNew ? "Товар создан" : "Товар обновлён",
+   285→          description: name,
+   286→        });
+   287→        onSaved();
+   288→        onBack();
+   289→      } else {
+   290→        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+   291→        toast({
+   292→          title: "Не удалось сохранить",
+   293→          description: data?.error ?? "Проверьте поля и попробуйте ещё раз",
+   294→          variant: "destructive",
+   295→        });
+   296→      }
+   297→    } catch {
+   298→      toast({
+   299→        title: "Не удалось сохранить",
+   300→        description: "Сервер недоступен — попробуйте ещё раз",
+   301→        variant: "destructive",
+   302→      });
+   303→    } finally {
+   304→      setSaving(false);
+   305→    }
+   306→  };
+   307→
+   308→  // Живой предпросмотр карточки на витрине (из текущей формы)
+   309→  const mainImage = images.find((image) => image.isMain) ?? images[0];
+   310→  const previewProduct = useMemo<Product | null>(() => {
+   311→    if (!mainImage) return null;
+   312→    const category = categories.find((item) => item.id === Number.parseInt(form.categoryId, 10));
+   313→    const price = Number(form.price.replace(",", "."));
+   314→    const oldParsed = Number(form.oldPrice.replace(",", "."));
+   315→    const oldPrice =
+   316→      form.oldPrice.trim() !== "" && Number.isFinite(oldParsed) && oldParsed > price
+   317→        ? Math.round(oldParsed)
+   318→        : null;
+   319→    return {
+   320→      id: 0,
+   321→      slug: "",
+   322→      name: form.name.trim() || "Название товара",
+   323→      description: form.description.trim() || "Описание товара",
+   324→      price: Number.isFinite(price) && price >= 1 ? Math.round(price) : 0,
+   325→      oldPrice,
+   326→      image: mainImage.url ?? mainImage.preview,
+   327→      rating: toNum(form.rating, 4.5, 0, 5),
+   328→      reviewsCount: toInt(form.reviewsCount, 0, 0, 1_000_000),
+   329→      badge: form.badge === "none" ? null : form.badge,
+   330→      brand: form.brand.trim() || "КуклаМаркет",
+   331→      ageMin: toInt(form.ageMin, 3, 0, 18),
+   332→      stock: toInt(form.stock, 25, 0, 100_000),
+   333→      featured: form.featured,
+   334→      categoryId: category?.id ?? 0,
+   335→      category: {
+   336→        id: category?.id ?? 0,
+   337→        slug: category?.slug ?? "",
+   338→        name: category?.name ?? "Категория не выбрана",
+   339→      },
+   340→    };
+   341→  }, [form, mainImage, categories]);
+   342→
+   343→  // ---------- Рендер ----------
+   344→
+   345→  if (loading) {
+   346→    return (
+   347→      <div className="space-y-5">
+   348→        <div className="flex items-center gap-3">
+   349→          <Skeleton className="size-10 rounded-full" />
+   350→          <div className="space-y-2">
+   351→            <Skeleton className="h-6 w-64" />
+   352→            <Skeleton className="h-4 w-44" />
+   353→          </div>
+   354→        </div>
+   355→        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+   356→          <div className="space-y-5">
+   357→            {[0, 1, 2, 3].map((index) => (
+   358→              <Skeleton key={index} className="h-56 w-full rounded-xl" />
+   359→            ))}
+   360→          </div>
+   361→          <Skeleton className="hidden h-96 w-full rounded-xl lg:block" />
+   362→        </div>
+   363→      </div>
+   364→    );
+   365→  }
+   366→
+   367→  if (notFound) {
+   368→    return (
+   369→      <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-gray-300 py-16 text-center">
+   370→        <PackageSearch className="size-12 text-gray-300" aria-hidden="true" />
+   371→        <p className="text-base font-bold text-gray-900">Товар не найден</p>
+   372→        <p className="max-w-xs text-sm text-gray-500">
+   373→          Возможно, он был удалён. Вернитесь к списку и обновите его.
+   374→        </p>
+   375→        <Button type="button" variant="outline" onClick={onBack} className="mt-1 rounded-full">
+   376→          <ArrowLeft className="size-4" aria-hidden="true" />
+   377→          К списку товаров
+   378→        </Button>
+   379→      </div>
+   380→    );
+   381→  }
+   382→
+   383→  return (
+   384→    <div className="space-y-5">
+   385→      {/* Шапка страницы */}
+   386→      <div className="flex flex-wrap items-center gap-3">
+   387→        <Button
+   388→          type="button"
+   389→          variant="outline"
+   390→          onClick={requestBack}
+   391→          className="rounded-full border-gray-300"
+   392→        >
+   393→          <ArrowLeft className="size-4" aria-hidden="true" />
+   394→          К списку товаров
+   395→        </Button>
+   396→        <div className="min-w-0">
+   397→          <h1 className="text-xl font-extrabold tracking-tight text-gray-900 sm:text-2xl">
+   398→            {isNew ? "Новый товар" : "Редактирование товара"}
+   399→          </h1>
+   400→          <p className="mt-0.5 text-sm text-gray-500">
+   401→            {isNew
+   402→              ? "Заполните карточку — товар сразу появится на витрине"
+   403→              : slug
+   404→                ? `ID ${editId} · /${slug}`
+   405→                : `ID ${editId}`}
+   406→          </p>
+   407→        </div>
+   408→      </div>
+   409→
+   410→      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+   411→        {/* Левая колонка — секции формы */}
+   412→        <div className="space-y-5">
+   413→          <Card>
+   414→            <CardHeader>
+   415→              <CardTitle className="text-base">Основная информация</CardTitle>
+   416→              <CardDescription>Название, категория и описание на странице товара</CardDescription>
+   417→            </CardHeader>
+   418→            <CardContent className="space-y-4">
+   419→              <div>
+   420→                <Label htmlFor="pe-name">Название *</Label>
+   421→                <Input
+   422→                  id="pe-name"
+   423→                  value={form.name}
+   424→                  onChange={(e) => set("name", e.target.value)}
+   425→                  placeholder="Например: Кукла «София» с набором аксессуаров"
+   426→                  className="mt-1.5"
+   427→                  maxLength={200}
+   428→                />
+   429→              </div>
+   430→              <div className="grid gap-4 sm:grid-cols-2">
+   431→                <div>
+   432→                  <Label htmlFor="pe-brand">Бренд</Label>
+   433→                  <Input
+   434→                    id="pe-brand"
+   435→                    value={form.brand}
+   436→                    onChange={(e) => set("brand", e.target.value)}
+   437→                    className="mt-1.5"
+   438→                    maxLength={80}
+   439→                  />
+   440→                </div>
+   441→                <div>
+   442→                  <Label htmlFor="pe-category">Категория *</Label>
+   443→                  <Select value={form.categoryId} onValueChange={(value) => set("categoryId", value)}>
+   444→                    <SelectTrigger id="pe-category" className="mt-1.5 w-full">
+   445→                      <SelectValue placeholder="Выберите категорию" />
+   446→                    </SelectTrigger>
+   447→                    <SelectContent>
+   448→                      {categories.map((category) => (
+   449→                        <SelectItem key={category.id} value={String(category.id)}>
+   450→                          {category.name}
+   451→                        </SelectItem>
+   452→                      ))}
+   453→                    </SelectContent>
+   454→                  </Select>
+   455→                </div>
+   456→              </div>
+   457→              <div>
+   458→                <Label htmlFor="pe-description">Описание *</Label>
+   459→                <Textarea
+   460→                  id="pe-description"
+   461→                  rows={6}
+   462→                  value={form.description}
+   463→                  onChange={(e) => set("description", e.target.value)}
+   464→                  placeholder="Расскажите про куклу: что в комплекте, чем особенна, кому подойдёт…"
+   465→                  className="mt-1.5 resize-y"
+   466→                  maxLength={2000}
+   467→                />
+   468→                <p className="mt-1.5 text-xs text-gray-400">
+   469→                  {form.description.length} / 2000 символов
+   470→                </p>
+   471→              </div>
+   472→            </CardContent>
+   473→          </Card>
+   474→
+   475→          <Card>
+   476→            <CardHeader>
+   477→              <CardTitle className="text-base">Цена и наличие</CardTitle>
+   478→              <CardDescription>
+   479→                Старая цена показывается зачёркнутой — скидка считается автоматически
+   480→              </CardDescription>
+   481→            </CardHeader>
+   482→            <CardContent>
+   483→              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+   484→                <div>
+   485→                  <Label htmlFor="pe-price">Цена, ₽ *</Label>
+   486→                  <Input
+   487→                    id="pe-price"
+   488→                    type="number"
+   489→                    min={1}
+   490→                    inputMode="numeric"
+   491→                    value={form.price}
+   492→                    onChange={(e) => set("price", e.target.value)}
+   493→                    placeholder="3499"
+   494→                    className="mt-1.5"
+   495→                  />
+   496→                </div>
+   497→                <div>
+   498→                  <Label htmlFor="pe-oldprice">Старая цена, ₽</Label>
+   499→                  <Input
+   500→                    id="pe-oldprice"
+   501→                    type="number"
+   502→                    min={0}
+   503→                    inputMode="numeric"
+   504→                    value={form.oldPrice}
+   505→                    onChange={(e) => set("oldPrice", e.target.value)}
+   506→                    placeholder="Не указана"
+   507→                    className="mt-1.5"
+   508→                  />
+   509→                </div>
+   510→                <div>
+   511→                  <Label htmlFor="pe-stock">Остаток, шт.</Label>
+   512→                  <Input
+   513→                    id="pe-stock"
+   514→                    type="number"
+   515→                    min={0}
+   516→                    inputMode="numeric"
+   517→                    value={form.stock}
+   518→                    onChange={(e) => set("stock", e.target.value)}
+   519→                    className="mt-1.5"
+   520→                  />
+   521→                </div>
+   522→                <div>
+   523→                  <Label htmlFor="pe-age">Возраст от, лет</Label>
+   524→                  <Input
+   525→                    id="pe-age"
+   526→                    type="number"
+   527→                    min={0}
+   528→                    max={18}
+   529→                    inputMode="numeric"
+   530→                    value={form.ageMin}
+   531→                    onChange={(e) => set("ageMin", e.target.value)}
+   532→                    className="mt-1.5"
+   533→                  />
+   534→                </div>
+   535→              </div>
+   536→            </CardContent>
+   537→          </Card>
+   538→
+   539→          <Card>
+   540→            <CardHeader>
+   541→              <CardTitle className="text-base">Характеристики и метка</CardTitle>
+   542→              <CardDescription>Метка и рейтинг показываются прямо на карточке</CardDescription>
+   543→            </CardHeader>
+   544→            <CardContent>
+   545→              <div className="grid gap-4 sm:grid-cols-3">
+   546→                <div>
+   547→                  <Label htmlFor="pe-badge">Метка на карточке</Label>
+   548→                  <Select value={form.badge} onValueChange={(value) => set("badge", value)}>
+   549→                    <SelectTrigger id="pe-badge" className="mt-1.5 w-full">
+   550→                      <SelectValue />
+   551→                    </SelectTrigger>
+   552→                    <SelectContent>
+   553→                      {BADGE_OPTIONS.map((option) => (
+   554→                        <SelectItem key={option.value} value={option.value}>
+   555→                          {option.label}
+   556→                        </SelectItem>
+   557→                      ))}
+   558→                    </SelectContent>
+   559→                  </Select>
+   560→                </div>
+   561→                <div>
+   562→                  <Label htmlFor="pe-rating">Рейтинг (0–5)</Label>
+   563→                  <Input
+   564→                    id="pe-rating"
+   565→                    type="number"
+   566→                    min={0}
+   567→                    max={5}
+   568→                    step={0.1}
+   569→                    inputMode="decimal"
+   570→                    value={form.rating}
+   571→                    onChange={(e) => set("rating", e.target.value)}
+   572→                    className="mt-1.5"
+   573→                  />
+   574→                </div>
+   575→                <div>
+   576→                  <Label htmlFor="pe-reviews">Отзывов</Label>
+   577→                  <Input
+   578→                    id="pe-reviews"
+   579→                    type="number"
+   580→                    min={0}
+   581→                    inputMode="numeric"
+   582→                    value={form.reviewsCount}
+   583→                    onChange={(e) => set("reviewsCount", e.target.value)}
+   584→                    className="mt-1.5"
+   585→                  />
+   586→                </div>
+   587→              </div>
+   588→            </CardContent>
+   589→          </Card>
+   590→
+   591→          <Card>
+   592→            <CardHeader>
+   593→              <CardTitle className="text-base">Фотографии *</CardTitle>
+   594→              <CardDescription>
+   595→                Загрузите с компьютера или выберите из библиотеки. Порядок меняется
+   596→                перетаскиванием, звёздочкой назначается главная — она показывается
+   597→                на карточке товара
+   598→              </CardDescription>
+   599→            </CardHeader>
+   600→            <CardContent>
+   601→              <ImageManager images={images} setImages={updateImages} library={library} />
+   602→            </CardContent>
+   603→          </Card>
+   604→        </div>
+   605→
+   606→        {/* Правый сайдбар (десктоп): предпросмотр + показ на витрине + сохранение */}
+   607→        <aside className="space-y-5 lg:sticky lg:top-24">
+   608→          <Card>
+   609→            <CardHeader>
+   610→              <CardTitle className="text-base">Как выглядит на витрине</CardTitle>
+   611→              <CardDescription>Живой предпросмотр карточки товара</CardDescription>
+   612→            </CardHeader>
+   613→            <CardContent>
+   614→              {previewProduct ? (
+   615→                <ProductCard
+   616→                  product={previewProduct}
+   617→                  onOpen={() => {}}
+   618→                  onAdd={() => {}}
+   619→                  canAdd={false}
+   620→                />
+   621→              ) : (
+   622→                <div className="flex aspect-square w-full max-w-[220px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 bg-[#F9F9F9] text-center">
+   623→                  <ImageOff className="size-8 text-gray-300" aria-hidden="true" />
+   624→                  <p className="max-w-[180px] text-xs text-gray-400">
+   625→                    Добавьте фото — здесь появится предпросмотр карточки
+   626→                  </p>
+   627→                </div>
+   628→              )}
+   629→            </CardContent>
+   630→          </Card>
+   631→
+   632→          <Card>
+   633→            <CardHeader>
+   634→              <CardTitle className="text-base">Показ на витрине</CardTitle>
+   635→            </CardHeader>
+   636→            <CardContent>
+   637→              <div className="flex items-center justify-between gap-4">
+   638→                <div className="min-w-0">
+   639→                  <p className="text-sm font-semibold text-gray-900">Хиты продаж</p>
+   640→                  <p className="mt-0.5 text-xs text-gray-500">Товар попадёт в карусель на главной</p>
+   641→                </div>
+   642→                <Switch
+   643→                  checked={form.featured}
+   644→                  onCheckedChange={(value) => set("featured", value)}
+   645→                  aria-label="Показывать в хитах продаж"
+   646→                />
+   647→              </div>
+   648→              <p className="mt-4 text-xs text-gray-400">
+   649→                Товар сразу виден в каталоге и по прямой ссылке. Slug генерируется из названия
+   650→                автоматически.
+   651→              </p>
+   652→            </CardContent>
+   653→          </Card>
+   654→
+   655→          {/* Кнопки сайдбара — только десктоп (на мобильных липкая нижняя панель) */}
+   656→          <div className="hidden flex-col gap-2.5 rounded-xl border border-gray-200 bg-white p-4 lg:flex">
+   657→            <Button
+   658→              type="button"
+   659→              disabled={saving}
+   660→              onClick={() => void handleSave()}
+   661→              className="w-full rounded-full bg-[#CC0000] text-white hover:bg-[#A80000]"
+   662→            >
+   663→              {saving ? (
+   664→                <>
+   665→                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   666→                  Сохраняем…
+   667→                </>
+   668→              ) : (
+   669→                <>
+   670→                  <Save className="size-4" aria-hidden="true" />
+   671→                  {isNew ? "Создать товар" : "Сохранить изменения"}
+   672→                </>
+   673→              )}
+   674→            </Button>
+   675→            <Button
+   676→              type="button"
+   677→              variant="outline"
+   678→              onClick={requestBack}
+   679→              className="w-full rounded-full"
+   680→            >
+   681→              Отмена
+   682→            </Button>
+   683→          </div>
+   684→        </aside>
+   685→      </div>
+   686→
+   687→      {/* Мобильная липкая панель сохранения */}
+   688→      <div className="sticky bottom-0 -mx-4 z-30 mt-6 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur sm:-mx-5 sm:px-5 lg:hidden">
+   689→        <div className="flex gap-2.5">
+   690→          <Button
+   691→            type="button"
+   692→            variant="outline"
+   693→            onClick={requestBack}
+   694→            className="flex-1 rounded-full"
+   695→          >
+   696→            Отмена
+   697→          </Button>
+   698→          <Button
+   699→            type="button"
+   700→            disabled={saving}
+   701→            onClick={() => void handleSave()}
+   702→            className="flex-[2] rounded-full bg-[#CC0000] text-white hover:bg-[#A80000]"
+   703→          >
+   704→            {saving ? (
+   705→              <>
+   706→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   707→                Сохраняем…
+   708→              </>
+   709→            ) : isNew ? (
+   710→              "Создать товар"
+   711→            ) : (
+   712→              "Сохранить"
+   713→            )}
+   714→          </Button>
+   715→        </div>
+   716→      </div>
+   717→
+   718→      {/* Уход с несохранёнными изменениями */}
+   719→      <AlertDialog open={confirmLeave} onOpenChange={(open) => !open && setConfirmLeave(false)}>
+   720→        <AlertDialogContent>
+   721→          <AlertDialogHeader>
+   722→            <AlertDialogTitle>Уйти без сохранения?</AlertDialogTitle>
+   723→            <AlertDialogDescription>
+   724→              У товара есть несохранённые изменения — они будут потеряны, если покинуть страницу.
+   725→            </AlertDialogDescription>
+   726→          </AlertDialogHeader>
+   727→          <AlertDialogFooter>
+   728→            <AlertDialogCancel>Остаться</AlertDialogCancel>
+   729→            <AlertDialogAction
+   730→              onClick={() => {
+   731→                setConfirmLeave(false);
+   732→                setDirty(false);
+   733→                onBack();
+   734→              }}
+   735→              className="bg-[#CC0000] text-white hover:bg-[#A80000]"
+   736→            >
+   737→              Уйти
+   738→            </AlertDialogAction>
+   739→          </AlertDialogFooter>
+   740→        </AlertDialogContent>
+   741→      </AlertDialog>
+   742→    </div>
+   743→  );
+   744→}
+   745→

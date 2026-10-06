@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Based on the image provided, here are the elements in the sticky bar from left to right:\n\n1.  **Is there an 'Add to cart' or any red/dark button inside the bar?** No. There is no 'Add to cart' button, red button, or dark-colored button visible within the bar itself.\n2.  **What is to the right of the quantity stepper?** Nothing. The quantity stepper (showing \"2\") is the final element on the far right side of the bar.\n3.  **What is the exact price shown?** $32.99\n4.  **Is the bar's left side showing a product thumbnail image? What text is shown near it?** Yes, there is a small product thumbnail image of a doll on the far left. To its right, the text reads: \"Shop all Monster High\" (in a smaller, grey font) and below that, \"**Monster High Dawn of the Dance Dance Cleo**\" (in a larger, bold black font).",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1791099484,
+  "id": "2026100415375963c2975b87354199",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "2026100415375963c2975b87354199",
+  "usage": {
+    "completion_tokens": 212,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 841,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1053
+  }
+}

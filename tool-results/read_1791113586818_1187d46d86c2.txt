@@ -1,0 +1,919 @@
+     1→"use client";
+     2→
+     3→// Страница товара (виртуальная страница на роуте `/` с параметром ?product=<id>).
+     4→// Сверху — как на референсе Target PDP: хлебные крошки → слева галерея с видами и
+     5→// миниатюрами (развернуть / в список желаний) → справа ссылка на категорию,
+     6→// заголовок, рейтинг, бейджи, цена, степпер и кнопка «Добавить в корзину».
+     7→//
+     8→// Ниже блока с ценой и добавлением в корзину — секция «Об этом товаре» по
+     9→// референсу: тонкая серая линия-разделитель → крупный центрированный заголовок
+    10→// на белом фоне → аккордеон «Детали» (открыт: слева «Особенности» — буллеты с
+    11→// кнопкой «Показать ещё», справа «Описание») тоже на белом → затем серая
+    12→// подложка #F7F7F7 с белой карточкой, внутри которой три свёрнутых раздела с
+    13→// шевронами: «Характеристики», «Доставка и возврат», «Вопросы и ответы».
+    14→// Внизу — карусель похожих товаров.
+    15→//
+    16→// При прокрутке, когда блок с ценой, количеством и кнопкой «Добавить в корзину»
+    17→// уходит вверх за шапку, под шапкой появляется липкая панель покупки
+    18→// (StickyBuyBar — как на референсе Target) и скрывается при возврате блока.
+    19→
+    20→import { useEffect, useRef, useState } from "react";
+    21→import Image from "next/image";
+    22→import {
+    23→  Heart,
+    24→  MapPin,
+    25→  Maximize2,
+    26→  TriangleAlert,
+    27→  Truck,
+    28→  Undo2,
+    29→} from "lucide-react";
+    30→import {
+    31→  Accordion,
+    32→  AccordionContent,
+    33→  AccordionItem,
+    34→  AccordionTrigger,
+    35→} from "@/components/ui/accordion";
+    36→import {
+    37→  Breadcrumb,
+    38→  BreadcrumbItem,
+    39→  BreadcrumbLink,
+    40→  BreadcrumbList,
+    41→  BreadcrumbPage,
+    42→  BreadcrumbSeparator,
+    43→} from "@/components/ui/breadcrumb";
+    44→import {
+    45→  Carousel,
+    46→  CarouselContent,
+    47→  CarouselItem,
+    48→  CarouselNext,
+    49→  CarouselPrevious,
+    50→} from "@/components/ui/carousel";
+    51→import {
+    52→  Dialog,
+    53→  DialogContent,
+    54→  DialogDescription,
+    55→  DialogTitle,
+    56→} from "@/components/ui/dialog";
+    57→import { Skeleton } from "@/components/ui/skeleton";
+    58→import { useToast } from "@/hooks/use-toast";
+    59→import { cn } from "@/lib/utils";
+    60→import { ProductCard } from "./product-card";
+    61→import { QuantityStepper } from "./quantity-stepper";
+    62→import { SectionHeader } from "./section-header";
+    63→import { Stars } from "./stars";
+    64→import { StickyBuyBar } from "./sticky-buy-bar";
+    65→import { BADGE_LABELS, clamp, formatPrice, pluralize } from "./utils";
+    66→import type { Product } from "./types";
+    67→
+    68→const BADGE_STYLES: Record<string, string> = {
+    69→  hit: "bg-[#CC0000] text-white",
+    70→  new: "bg-emerald-600 text-white",
+    71→  sale: "bg-white text-[#CC0000] ring-1 ring-[#CC0000]",
+    72→  deal: "bg-gray-900 text-white",
+    73→};
+    74→
+    75→// Виды товара: у каждого товара одно фото — делаем «крупные планы»
+    76→// масштабированием (как миниатюры-крупные планы на референсе)
+    77→const GALLERY_VIEWS = [
+    78→  { id: "full", label: "Фото целиком", imageClass: "scale-100" },
+    79→  { id: "top", label: "Крупный план", imageClass: "scale-[1.8] origin-top" },
+    80→  { id: "bottom", label: "Детали наряда", imageClass: "scale-[1.8] origin-bottom" },
+    81→] as const;
+    82→
+    83→// «Особенности» для аккордеона «Детали» — как Highlights на референсе
+    84→const HIGHLIGHTS: Record<string, string[]> = {
+    85→  "fashion-victoria": [
+    86→    "Кукла Виктория с длинными волосами — их легко расчёсывать, укладывать и заплетать в новые причёски",
+    87→    "Мини-гардероб и 6 сменных нарядов: от вечернего платья до спортивного костюма",
+    88→    "Расчёска и аксессуары для волос уже в комплекте",
+    89→    "Идеальный подарок юной моднице и первое знакомство с миром стиля",
+    90→  ],
+    91→  "fashion-runway": [
+    92→    "Кукла в гламурном наряде — готова к первому выходу на подиум",
+    93→    "Три сменных образа для бесконечных экспериментов со стилем",
+    94→    "Зеркальная сцена-подиум превращает детскую в backstage настоящего показа",
+    95→    "Отличный повод устроить показ мод для всей семьи",
+    96→  ],
+    97→  "fashion-summer": [
+    98→    "Кукла в ярком сарафане — летнее настроение круглый год",
+    99→    "Чемоданчик для хранения и переноски всех аксессуаров",
+   100→    "Шляпа, солнечные очки и мини-аксессуары в комплекте",
+   101→    "Компактный набор — удобно брать в дорогу и в гости",
+   102→  ],
+   103→  "baby-mia": [
+   104→    "Нежный пупс с реалистичной мимикой",
+   105→    "В комплекте мягкая пелёнка, бутылочка и соска",
+   106→    "Тело куклы можно купать — игра станет ещё реалистичнее",
+   107→    "Учит заботе и бережному уходу — первый «малыш» для маленькой мамы",
+   108→  ],
+   109→  "baby-twins": [
+   110→    "Две куклы-младенца в одном наборе — двойные игры и двойная радость",
+   111→    "Тома и Тим в уютных комбинезонах с голубым и розовым узором",
+   112→    "Куклы такие разные, но по-настоящему неразлучные",
+   113→    "Замечательный подарок для игры вдвоём — с сестрой, братом или подругой",
+   114→  ],
+   115→  "baby-mila-stroller": [
+   116→    "Кукла Мила с удобной коляской — мини-прогулки каждый день",
+   117→    "Капюшон от солнца и корзинка для любимых игрушек",
+   118→    "Ремни безопасности надёжно держат куклу на «прогулке»",
+   119→    "Коляска складывается одним движением — легко хранить и перевозить",
+   120→  ],
+   121→  "collectible-anastasia": [
+   122→    "Фарфоровая кукла в бальном платье с кружевом",
+   123→    "Волосы уложены в высокую причёску — работа мастеров",
+   124→    "Подставка в комплекте — удобно выставить куклу на полке",
+   125→    "Роскошный подарок коллекционеру на праздник или юбилей",
+   126→  ],
+   127→  "collectible-vintage": [
+   128→    "Кукла в стиле 60-х: горошек, перчатки и ретро-причёска",
+   129→    "Винтажная классика для ценителей кукольного искусства",
+   130→    "Детали эпохи — от силуэта платья до макияжа",
+   131→    "Изюминка любой домашней коллекции и стильный подарок",
+   132→  ],
+   133→  "collectible-theatre": [
+   134→    "Бархатное бордовое платье с золотым веером и маской",
+   135→    "Торжественный образ для выставочной витрины",
+   136→    "Кукла «Театральный сезон» — жемчужина коллекции",
+   137→    "Подарок ценителям театра и красивых кукол",
+   138→  ],
+   139→  "interactive-sonya": [
+   140→    "Говорит 30 фраз, поёт песенки и рассказывает сказки",
+   141→    "Глаза открываются и закрываются — кукла кажется совсем живой",
+   142→    "Батарейки уже в комплекте — играйте сразу из коробки",
+   143→    "Развивает речь и память: ребёнок подражает и запоминает сюжеты",
+   144→  ],
+   145→  "interactive-vet": [
+   146→    "Кукла-ветеринар Вера «лечит» зверей — игра в настоящего доктора",
+   147→    "Белый халат и плюшевый щенок-пациент в комплекте",
+   148→    "Чемоданчик доктора со стетоскопом и игрушечным шприцем",
+   149→    "Знакомит с профессией и учит заботе о животных",
+   150→  ],
+   151→  "interactive-teacher": [
+   152→    "Учительница Ольга проводит первый урок — школа прямо дома",
+   153→    "В наборе школьная доска, крошечные тетради, указка и глобус",
+   154→    "Кукла с подвижными руками — удобно «писать» на доске",
+   155→    "Помогает подготовиться к школе в игровой форме",
+   156→  ],
+   157→  "playsets-dollhouse": [
+   158→    "Трёхэтажный домик со спальней, кухней, гостиной и балконом",
+   159→    "Мебель уже внутри — заселяйтесь и играйте сразу",
+   160→    "Сборка за 20 минут по понятной инструкции",
+   161→    "Высота 90 см — просторно для кукол любого роста",
+   162→  ],
+   163→  "playsets-furniture": [
+   164→    "14 предметов мебели для кукольного дома в едином стиле",
+   165→    "Кровать с балдахином, обеденный стол, стулья, диван и торшер",
+   166→    "Продуманные детали — от мягких подушек до мини-посуды",
+   167→    "Отличное пополнение для любого домика мечты",
+   168→  ],
+   169→  "playsets-clothes-set": [
+   170→    "10 нарядов на все случаи — от уютной пижамы до бального платья",
+   171→    "Вешалки и коробка для хранения в комплекте",
+   172→    "Одежду легко надевать — справится даже маленькая хозяйка",
+   173→    "Бесконечные сочетания и первые уроки порядка в гардеробе",
+   174→  ],
+   175→  "playsets-teaset": [
+   176→    "Фарфоровый сервиз на 4 персоны — 15 предметов",
+   177→    "Чайник, чашки, блюдца и сахарница с цветочным узором",
+   178→    "Настоящее «взрослое» чаепитие для кукол и гостей",
+   179→    "Игра учит манерам, гостеприимству и сервировке стола",
+   180→  ],
+   181→};
+   182→
+   183→function getHighlights(product: Product): string[] {
+   184→  const preset = HIGHLIGHTS[product.slug];
+   185→  if (preset && preset.length > 0) return preset;
+   186→  // Запасной вариант: первые предложения описания товара
+   187→  return product.description
+   188→    .split(". ")
+   189→    .map((part) => part.trim())
+   190→    .filter(Boolean)
+   191→    .map((part) => (part.endsWith(".") ? part : `${part}.`))
+   192→    .slice(0, 3);
+   193→}
+   194→
+   195→// Заголовок аккордеона как на референсе: жирный текст слева, шеврон справа,
+   196→// без подчёркивания при наведении, крупная зона для пальца
+   197→const ACCORDION_TRIGGER_CLASS =
+   198→  "py-5 text-base font-bold text-gray-900 hover:no-underline sm:text-lg [&>svg]:size-5 [&>svg]:text-gray-700";
+   199→
+   200→interface ProductPageProps {
+   201→  productId: number;
+   202→  /** false — корзина выключена в админке: скрываем степпер, кнопку и липкую панель */
+   203→  cartEnabled: boolean;
+   204→  onAdd: (product: Product, quantity: number) => void;
+   205→  onQuickAdd: (product: Product) => void;
+   206→  onOpenProduct: (product: Product) => void;
+   207→  onGoCategory: (slug: string) => void;
+   208→  onGoHome: () => void;
+   209→}
+   210→
+   211→export function ProductPage({
+   212→  productId,
+   213→  cartEnabled,
+   214→  onAdd,
+   215→  onQuickAdd,
+   216→  onOpenProduct,
+   217→  onGoCategory,
+   218→  onGoHome,
+   219→}: ProductPageProps) {
+   220→  const [product, setProduct] = useState<Product | null>(null);
+   221→  const [status, setStatus] = useState<"loading" | "ready" | "notfound">("loading");
+   222→  const [related, setRelated] = useState<Product[]>([]);
+   223→
+   224→  // Количество — общее для блока покупки и липкой панели (синхронный степпер)
+   225→  const [quantity, setQuantity] = useState(1);
+   226→  // Блок «цена + количество + Добавить в корзину», за которым следит скролл
+   227→  const buyBoxRef = useRef<HTMLDivElement>(null);
+   228→  const [barVisible, setBarVisible] = useState(false);
+   229→
+   230→  useEffect(() => {
+   231→    let cancelled = false;
+   232→    // Компонент перемонтируется при смене товара (key={productId} в родителе),
+   233→    // поэтому исходное состояние уже «loading» — здесь только загрузка данных.
+   234→
+   235→    fetch(`/api/products/${productId}`)
+   236→      .then((res) => (res.ok ? res.json() : res.status === 404 ? null : Promise.reject(new Error("bad response"))))
+   237→      .then((data: Product | null) => {
+   238→        if (cancelled) return;
+   239→        if (!data) {
+   240→          setStatus("notfound");
+   241→          return;
+   242→        }
+   243→        setProduct(data);
+   244→        setStatus("ready");
+   245→        window.scrollTo({ top: 0 });
+   246→        // Похожие: сначала своя категория; если меньше 8 — добираем популярными
+   247→        // из других категорий, чтобы карусель не выглядела полупустой
+   248→        fetch(`/api/products?category=${data.category.slug}&sort=popular`)
+   249→          .then((res) => (res.ok ? res.json() : Promise.reject(new Error("bad response"))))
+   250→          .then(async (list: Product[]) => {
+   251→            if (cancelled) return;
+   252→            const sameCategory = list.filter((item) => item.id !== data.id).slice(0, 8);
+   253→            setRelated(sameCategory);
+   254→            if (sameCategory.length < 8) {
+   255→              const res = await fetch("/api/products?sort=popular");
+   256→              if (!res.ok || cancelled) return;
+   257→              const popular = (await res.json()) as Product[];
+   258→              const used = new Set([data.id, ...sameCategory.map((item) => item.id)]);
+   259→              const extra = popular.filter((item) => !used.has(item.id)).slice(0, 8 - sameCategory.length);
+   260→              setRelated([...sameCategory, ...extra]);
+   261→            }
+   262→          })
+   263→          .catch(() => {});
+   264→      })
+   265→      .catch(() => {
+   266→        if (!cancelled) setStatus("notfound");
+   267→      });
+   268→
+   269→    return () => {
+   270→      cancelled = true;
+   271→    };
+   272→  }, [productId]);
+   273→
+   274→  // Заголовок вкладки — имя товара (восстанавливаем при уходе)
+   275→  useEffect(() => {
+   276→    if (!product) return;
+   277→    const previous = document.title;
+   278→    document.title = `${product.name} — КуклаМаркет`;
+   279→    return () => {
+   280→      document.title = previous;
+   281→    };
+   282→  }, [product]);
+   283→
+   284→  // Липкая панель покупки: показываем, когда блок с ценой и количеством
+   285→  // полностью ушёл вверх за шапку (его низ выше низа шапки); скрываем,
+   286→  // когда блок снова появляется из-под шапки. Высоту шапки берём из DOM,
+   287→  // чтобы не зависеть от жёсткой константы.
+   288→  useEffect(() => {
+   289→    if (status !== "ready") return;
+   290→    let raf = 0;
+   291→    const update = () => {
+   292→      raf = 0;
+   293→      const el = buyBoxRef.current;
+   294→      if (!el) return;
+   295→      const header = document.querySelector("header");
+   296→      const headerBottom = header ? header.getBoundingClientRect().bottom : 76;
+   297→      setBarVisible(el.getBoundingClientRect().bottom < headerBottom);
+   298→    };
+   299→    const onScrollOrResize = () => {
+   300→      if (!raf) raf = requestAnimationFrame(update);
+   301→    };
+   302→    update();
+   303→    window.addEventListener("scroll", onScrollOrResize, { passive: true });
+   304→    window.addEventListener("resize", onScrollOrResize);
+   305→    return () => {
+   306→      if (raf) cancelAnimationFrame(raf);
+   307→      window.removeEventListener("scroll", onScrollOrResize);
+   308→      window.removeEventListener("resize", onScrollOrResize);
+   309→    };
+   310→  }, [status]);
+   311→
+   312→  if (status === "loading") {
+   313→    return (
+   314→      <div className="shop-container pb-6 pt-4 sm:pt-6" aria-busy="true" aria-label="Загружаем товар">
+   315→        <Skeleton className="h-4 w-64 max-w-full" />
+   316→        <div className="mt-6 grid items-start gap-8 lg:grid-cols-2 lg:gap-12">
+   317→          <div>
+   318→            <Skeleton className="aspect-square w-full rounded-xl" />
+   319→            <div className="mt-3 flex gap-2.5">
+   320→              {Array.from({ length: 3 }, (_, index) => (
+   321→                <Skeleton key={index} className="size-16 rounded-lg sm:size-20" />
+   322→              ))}
+   323→            </div>
+   324→          </div>
+   325→          <div className="space-y-4">
+   326→            <Skeleton className="h-4 w-44" />
+   327→            <Skeleton className="h-9 w-11/12" />
+   328→            <Skeleton className="h-5 w-32" />
+   329→            <Skeleton className="h-10 w-52" />
+   330→            <Skeleton className="h-12 w-full max-w-sm rounded-full" />
+   331→          </div>
+   332→        </div>
+   333→      </div>
+   334→    );
+   335→  }
+   336→
+   337→  if (status === "notfound" || !product) {
+   338→    return (
+   339→      <div className="shop-container flex flex-col items-center gap-3 pb-12 pt-20 text-center">
+   340→        <p className="text-2xl font-extrabold text-gray-900">Товар не найден</p>
+   341→        <p className="max-w-sm text-sm text-gray-500">
+   342→          Возможно, он уже распродан или ссылка устарела. Загляните в каталог — там много других кукол!
+   343→        </p>
+   344→        <button
+   345→          type="button"
+   346→          onClick={onGoHome}
+   347→          className="mt-2 rounded-full bg-[#CC0000] px-6 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#A80000]"
+   348→        >
+   349→          Вернуться в каталог
+   350→        </button>
+   351→      </div>
+   352→    );
+   353→  }
+   354→
+   355→  const stockMax = product ? Math.max(product.stock, 1) : 1;
+   356→  const changeQuantity = (value: number) => setQuantity(clamp(value, 1, stockMax));
+   357→
+   358→  return (
+   359→    <>
+   360→      {/* Липкая панель покупки — появляется при прокрутке за блок с ценой.
+   361→          Скрывается целиком, когда корзина выключена в админ-панели. */}
+   362→      {cartEnabled && (
+   363→        <StickyBuyBar
+   364→          product={product}
+   365→          visible={barVisible}
+   366→          quantity={quantity}
+   367→          onQuantityChange={changeQuantity}
+   368→          onGoCategory={onGoCategory}
+   369→        />
+   370→      )}
+   371→
+   372→      <div className="shop-container pt-4 sm:pt-6">
+   373→        <ProductBreadcrumbs product={product} onGoHome={onGoHome} onGoCategory={onGoCategory} />
+   374→
+   375→        <div className="mt-4 grid items-start gap-8 sm:mt-6 lg:grid-cols-2 lg:gap-12">
+   376→          <ProductGallery product={product} />
+   377→          <ProductInfo
+   378→            product={product}
+   379→            cartEnabled={cartEnabled}
+   380→            quantity={quantity}
+   381→            onQuantityChange={changeQuantity}
+   382→            buyBoxRef={buyBoxRef}
+   383→            onAdd={onAdd}
+   384→            onGoCategory={onGoCategory}
+   385→          />
+   386→        </div>
+   387→      </div>
+   388→
+   389→      <div className="pb-6">
+   390→        <AboutItemSection product={product} />
+   391→
+   392→        {related.length > 0 && (
+   393→          <section className="shop-container mt-10 sm:mt-14" aria-label="Похожие товары">
+   394→            <SectionHeader
+   395→              title="Похожие товары"
+   396→              subtitle={`Из категории «${product.category.name}» и не только — что ещё смотрят покупатели`}
+   397→            />
+   398→            <Carousel opts={{ align: "start", slidesToScroll: 2 }} className="mt-5">
+   399→              <CarouselContent className="-ml-3 sm:-ml-4">
+   400→                {related.map((item) => (
+   401→                  <CarouselItem
+   402→                    key={item.id}
+   403→                    className="basis-1/2 pl-3 sm:basis-1/3 sm:pl-4 lg:basis-1/4 xl:basis-1/5"
+   404→                  >
+   405→                    <ProductCard
+   406→                      product={item}
+   407→                      onOpen={onOpenProduct}
+   408→                      onAdd={onQuickAdd}
+   409→                      canAdd={cartEnabled}
+   410→                    />
+   411→                  </CarouselItem>
+   412→                ))}
+   413→              </CarouselContent>
+   414→              <CarouselPrevious
+   415→                aria-label="Предыдущие товары"
+   416→                className="hidden shadow-md sm:flex sm:-left-6 lg:-left-8"
+   417→              />
+   418→              <CarouselNext
+   419→                aria-label="Следующие товары"
+   420→                className="hidden shadow-md sm:flex sm:-right-6 lg:-right-8"
+   421→              />
+   422→            </Carousel>
+   423→          </section>
+   424→        )}
+   425→      </div>
+   426→    </>
+   427→  );
+   428→}
+   429→
+   430→function ProductBreadcrumbs({
+   431→  product,
+   432→  onGoHome,
+   433→  onGoCategory,
+   434→}: {
+   435→  product: Product;
+   436→  onGoHome: () => void;
+   437→  onGoCategory: (slug: string) => void;
+   438→}) {
+   439→  return (
+   440→    <Breadcrumb>
+   441→      <BreadcrumbList>
+   442→        <BreadcrumbItem>
+   443→          <BreadcrumbLink asChild>
+   444→            <button type="button" onClick={onGoHome} className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#CC0000]/30">
+   445→              Главная
+   446→            </button>
+   447→          </BreadcrumbLink>
+   448→        </BreadcrumbItem>
+   449→        <BreadcrumbSeparator />
+   450→        <BreadcrumbItem>
+   451→          <BreadcrumbLink asChild>
+   452→            <button
+   453→              type="button"
+   454→              onClick={() => onGoCategory(product.category.slug)}
+   455→              className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#CC0000]/30"
+   456→            >
+   457→              {product.category.name}
+   458→            </button>
+   459→          </BreadcrumbLink>
+   460→        </BreadcrumbItem>
+   461→        <BreadcrumbSeparator />
+   462→        <BreadcrumbItem>
+   463→          <BreadcrumbPage className="max-w-[50vw] truncate text-gray-900 sm:max-w-sm">{product.name}</BreadcrumbPage>
+   464→        </BreadcrumbItem>
+   465→      </BreadcrumbList>
+   466→    </Breadcrumb>
+   467→  );
+   468→}
+   469→
+   470→function ProductGallery({ product }: { product: Product }) {
+   471→  const { toast } = useToast();
+   472→  const [view, setView] = useState(0);
+   473→  const [zoomOpen, setZoomOpen] = useState(false);
+   474→  const current = GALLERY_VIEWS[view] ?? GALLERY_VIEWS[0];
+   475→
+   476→  return (
+   477→    <div>
+   478→      <div className="relative aspect-square overflow-hidden rounded-xl bg-[#F7F7F7] ring-1 ring-gray-200/70">
+   479→        <Image
+   480→          src={product.image}
+   481→          alt={`${product.name} — ${current.label.toLowerCase()}`}
+   482→          fill
+   483→          sizes="(min-width: 1024px) 45vw, 92vw"
+   484→          unoptimized
+   485→          priority
+   486→          className={cn("object-cover transition-transform duration-300", current.imageClass)}
+   487→        />
+   488→
+   489→        {/* Развернуть фото (как на референсе) */}
+   490→        <button
+   491→          type="button"
+   492→          onClick={() => setZoomOpen(true)}
+   493→          aria-label="Развернуть фото"
+   494→          className="absolute right-3 top-3 flex size-10 items-center justify-center rounded-full bg-white/95 text-gray-700 shadow-md transition-colors hover:bg-white hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#CC0000]/40"
+   495→        >
+   496→          <Maximize2 className="size-[18px]" aria-hidden="true" />
+   497→        </button>
+   498→
+   499→        {/* В список желаний — заглушка «В разработке» */}
+   500→        <button
+   501→          type="button"
+   502→          onClick={() =>
+   503→            toast({
+   504→              title: "В разработке",
+   505→              description: "Список желаний появится совсем скоро — оставайтесь с нами!",
+   506→            })
+   507→          }
+   508→          aria-label="Добавить в список желаний"
+   509→          className="absolute bottom-3 right-3 flex size-10 items-center justify-center rounded-full bg-white/95 text-gray-700 shadow-md transition-colors hover:bg-white hover:text-[#CC0000] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#CC0000]/40"
+   510→        >
+   511→          <Heart className="size-[18px]" aria-hidden="true" />
+   512→        </button>
+   513→      </div>
+   514→
+   515→      {/* Миниатюры-виды (крупные планы, как на референсе) */}
+   516→      <div className="mt-3 flex gap-2.5" role="group" aria-label="Виды товара">
+   517→        {GALLERY_VIEWS.map((item, index) => (
+   518→          <button
+   519→            key={item.id}
+   520→            type="button"
+   521→            onClick={() => setView(index)}
+   522→            aria-label={item.label}
+   523→            aria-pressed={index === view}
+   524→            className={cn(
+   525→              "relative size-16 overflow-hidden rounded-lg bg-[#F7F7F7] transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#CC0000] sm:size-20",
+   526→              index === view ? "ring-2 ring-[#CC0000]" : "ring-1 ring-gray-200/70 hover:ring-gray-400",
+   527→            )}
+   528→          >
+   529→            <Image
+   530→              src={product.image}
+   531→              alt=""
+   532→              fill
+   533→              sizes="80px"
+   534→              unoptimized
+   535→              className={cn("object-cover", item.imageClass)}
+   536→            />
+   537→          </button>
+   538→        ))}
+   539→      </div>
+   540→
+   541→      <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
+   542→        <DialogContent className="max-w-3xl sm:rounded-2xl">
+   543→          <DialogTitle className="sr-only">{product.name}</DialogTitle>
+   544→          <DialogDescription className="sr-only">Увеличенное фото товара</DialogDescription>
+   545→          <div className="relative aspect-square overflow-hidden rounded-xl bg-[#F7F7F7]">
+   546→            <Image
+   547→              src={product.image}
+   548→              alt={product.name}
+   549→              fill
+   550→              sizes="(min-width: 768px) 768px, 92vw"
+   551→              unoptimized
+   552→              className={cn("object-cover", current.imageClass)}
+   553→            />
+   554→          </div>
+   555→        </DialogContent>
+   556→      </Dialog>
+   557→    </div>
+   558→  );
+   559→}
+   560→
+   561→function ProductInfo({
+   562→  product,
+   563→  cartEnabled,
+   564→  quantity,
+   565→  onQuantityChange,
+   566→  buyBoxRef,
+   567→  onAdd,
+   568→  onGoCategory,
+   569→}: {
+   570→  product: Product;
+   571→  cartEnabled: boolean;
+   572→  quantity: number;
+   573→  onQuantityChange: (value: number) => void;
+   574→  buyBoxRef: React.RefObject<HTMLDivElement | null>;
+   575→  onAdd: (product: Product, quantity: number) => void;
+   576→  onGoCategory: (slug: string) => void;
+   577→}) {
+   578→  const discount = product.oldPrice ? Math.round((1 - product.price / product.oldPrice) * 100) : 0;
+   579→  const badgeLabel = product.badge ? BADGE_LABELS[product.badge] : undefined;
+   580→  const lowStock = product.stock > 0 && product.stock <= 12;
+   581→
+   582→  return (
+   583→    <div className="min-w-0">
+   584→      {/* Ссылка на категорию — как «Shop all …» на референсе */}
+   585→      <button
+   586→        type="button"
+   587→        onClick={() => onGoCategory(product.category.slug)}
+   588→        className="rounded-sm text-sm font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition-colors hover:text-[#CC0000] hover:decoration-[#CC0000] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#CC0000]/30"
+   589→      >
+   590→        Все товары: {product.category.name}
+   591→      </button>
+   592→
+   593→      <h1 className="mt-1.5 text-2xl font-extrabold leading-tight tracking-tight text-gray-900 sm:text-3xl">
+   594→        {product.name}
+   595→      </h1>
+   596→
+   597→      <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+   598→        <Stars rating={product.rating} />
+   599→        <span className="text-sm font-semibold text-gray-800">{product.rating.toFixed(1)}</span>
+   600→        <span className="text-sm text-gray-400" aria-hidden="true">
+   601→          ·
+   602→        </span>
+   603→        <span className="text-sm text-gray-500">
+   604→          {product.reviewsCount} {pluralize(product.reviewsCount, "отзыв", "отзыва", "отзывов")}
+   605→        </span>
+   606→      </div>
+   607→
+   608→      <div className="mt-3.5 flex flex-wrap items-center gap-2">
+   609→        {badgeLabel && (
+   610→          <span
+   611→            className={cn(
+   612→              "rounded-full px-3 py-1 text-xs font-bold leading-none shadow-sm",
+   613→              BADGE_STYLES[product.badge as string],
+   614→            )}
+   615→          >
+   616→            {badgeLabel}
+   617→          </span>
+   618→        )}
+   619→        <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold leading-none text-gray-700">
+   620→          Возраст {product.ageMin}+
+   621→        </span>
+   622→        {product.stock > 0 ? (
+   623→          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold leading-none text-emerald-700">
+   624→            <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+   625→            В наличии: {product.stock} шт.
+   626→          </span>
+   627→        ) : (
+   628→          <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold leading-none text-gray-500">
+   629→            Нет в наличии
+   630→          </span>
+   631→        )}
+   632→      </div>
+   633→
+   634→      {/* Блок покупки: цена → «осталось мало» → степпер + кнопка.
+   635→          Контейнер с ref — «маяк» для липкой панели: когда он уходит за шапку,
+   636→          панель появляется, когда возвращается — исчезает. */}
+   637→      <div ref={buyBoxRef}>
+   638→        <div className="mt-5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+   639→          <span
+   640→            className={cn(
+   641→              "text-4xl font-extrabold tracking-tight",
+   642→              product.oldPrice ? "text-[#CC0000]" : "text-gray-900",
+   643→            )}
+   644→          >
+   645→            {formatPrice(product.price)}
+   646→          </span>
+   647→          {product.oldPrice && (
+   648→            <>
+   649→              <span className="text-lg text-gray-400 line-through">{formatPrice(product.oldPrice)}</span>
+   650→              <span className="rounded-full bg-[#FCE8E8] px-2 py-0.5 text-xs font-bold text-[#CC0000]">−{discount}%</span>
+   651→            </>
+   652→          )}
+   653→        </div>
+   654→        {lowStock && (
+   655→          <p className="mt-2 text-sm font-semibold text-amber-600">
+   656→            Осталось всего {product.stock} {pluralize(product.stock, "штука", "штуки", "штук")} — успейте!
+   657→          </p>
+   658→        )}
+   659→
+   660→        {cartEnabled ? (
+   661→          <div className="mt-6 flex flex-wrap items-center gap-3">
+   662→            <QuantityStepper
+   663→              value={quantity}
+   664→              onChange={onQuantityChange}
+   665→              max={Math.max(product.stock, 1)}
+   666→            />
+   667→            <button
+   668→              type="button"
+   669→              disabled={product.stock === 0}
+   670→              onClick={() => onAdd(product, quantity)}
+   671→              className="h-11 min-w-[220px] flex-1 rounded-full bg-gray-900 text-sm font-bold text-white transition-colors hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#CC0000]/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:h-12"
+   672→            >
+   673→              Добавить в корзину · {formatPrice(product.price * quantity)}
+   674→            </button>
+   675→          </div>
+   676→        ) : (
+   677→          <p className="mt-6 inline-flex rounded-full bg-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-500">
+   678→            Покупки временно приостановлены
+   679→          </p>
+   680→        )}
+   681→      </div>
+   682→    </div>
+   683→  );
+   684→}
+   685→
+   686→// Секция «Об этом товаре» — по референсу: на белом фоне тонкая линия-разделитель,
+   687→// крупный центрированный заголовок и аккордеон «Детали» (Особенности + Описание),
+   688→// ниже — серая подложка #F7F7F7 с белой карточкой свёрнутых разделов
+   689→function AboutItemSection({ product }: { product: Product }) {
+   690→  return (
+   691→    <section aria-label="Об этом товаре" className="mt-10 sm:mt-14">
+   692→      {/* Заголовок и «Детали» — на белом фоне страницы (как на референсе) */}
+   693→      <div className="shop-container border-t border-gray-200 pt-8 sm:pt-10">
+   694→        <h2 className="text-center text-xl font-bold tracking-tight text-gray-900 sm:text-2xl">
+   695→          Об этом товаре
+   696→        </h2>
+   697→
+   698→        <Accordion type="single" collapsible defaultValue="details" className="mt-2 sm:mt-4">
+   699→          <AccordionItem value="details" className="border-gray-200 border-b-0">
+   700→            <AccordionTrigger className={ACCORDION_TRIGGER_CLASS}>Детали</AccordionTrigger>
+   701→            <AccordionContent className="pb-6 sm:pb-8">
+   702→              <div className="grid gap-8 lg:grid-cols-2 lg:gap-12">
+   703→                <HighlightsBlock product={product} />
+   704→                <div>
+   705→                  <h3 className="text-[15px] font-bold text-gray-900">Описание</h3>
+   706→                  <p className="mt-3.5 text-sm leading-relaxed text-gray-700">{product.description}</p>
+   707→                  <p className="mt-4 text-xs leading-relaxed text-gray-400">
+   708→                    Производитель: {product.brand}. Комплектация уточнена в разделе «Особенности».
+   709→                  </p>
+   710→                </div>
+   711→              </div>
+   712→            </AccordionContent>
+   713→          </AccordionItem>
+   714→        </Accordion>
+   715→      </div>
+   716→
+   717→      {/* Серая подложка с белой карточкой свёрнутых разделов (как на референсе) */}
+   718→      <div className="shop-container mt-6 sm:mt-8">
+   719→        <div className="rounded-lg bg-[#F7F7F7] p-3 sm:p-4">
+   720→          <div className="rounded-xl bg-white px-4 py-2 sm:px-8 sm:py-3 lg:px-10">
+   721→            <Accordion type="single" collapsible>
+   722→              <AccordionItem value="specs">
+   723→                <AccordionTrigger className={ACCORDION_TRIGGER_CLASS}>Характеристики</AccordionTrigger>
+   724→                <AccordionContent className="pb-6 sm:pb-8">
+   725→                  <SpecsBlock product={product} />
+   726→                </AccordionContent>
+   727→              </AccordionItem>
+   728→
+   729→              <AccordionItem value="shipping">
+   730→                <AccordionTrigger className={ACCORDION_TRIGGER_CLASS}>Доставка и возврат</AccordionTrigger>
+   731→                <AccordionContent className="pb-6 sm:pb-8">
+   732→                  <ShippingBlock product={product} />
+   733→                </AccordionContent>
+   734→              </AccordionItem>
+   735→
+   736→              <AccordionItem value="qa">
+   737→                <AccordionTrigger className={ACCORDION_TRIGGER_CLASS}>Вопросы и ответы</AccordionTrigger>
+   738→                <AccordionContent className="pb-6 sm:pb-8">
+   739→                  <QaBlock product={product} />
+   740→                </AccordionContent>
+   741→              </AccordionItem>
+   742→            </Accordion>
+   743→          </div>
+   744→        </div>
+   745→      </div>
+   746→    </section>
+   747→  );
+   748→}
+   749→
+   750→// «Особенности» — буллеты с кнопкой «Показать ещё» (как Highlights на референсе):
+   751→// свёрнуто — первые 3 пункта с ограничением в 2 строки, развёрнуто — всё целиком
+   752→function HighlightsBlock({ product }: { product: Product }) {
+   753→  const highlights = getHighlights(product);
+   754→  const [expanded, setExpanded] = useState(false);
+   755→  const visible = expanded ? highlights : highlights.slice(0, 3);
+   756→  const canExpand = highlights.length > 3;
+   757→
+   758→  return (
+   759→    <div>
+   760→      <h3 className="text-[15px] font-bold text-gray-900">Особенности</h3>
+   761→      <ul className="mt-3.5 space-y-3">
+   762→        {visible.map((text, index) => (
+   763→          <li key={index} className="flex gap-3">
+   764→            <span className="mt-[9px] size-1.5 shrink-0 rounded-full bg-gray-700" aria-hidden="true" />
+   765→            <span className={cn("text-sm leading-relaxed text-gray-700", !expanded && "line-clamp-2")}>{text}</span>
+   766→          </li>
+   767→        ))}
+   768→      </ul>
+   769→      {canExpand && (
+   770→        <button
+   771→          type="button"
+   772→          onClick={() => setExpanded((value) => !value)}
+   773→          aria-expanded={expanded}
+   774→          className="mt-4 inline-flex h-9 items-center rounded-full border border-gray-300 bg-white px-5 text-[13px] font-semibold text-gray-800 transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#CC0000]/40"
+   775→        >
+   776→          {expanded ? "Свернуть" : "Показать ещё"}
+   777→        </button>
+   778→      )}
+   779→    </div>
+   780→  );
+   781→}
+   782→
+   783→function SpecsBlock({ product }: { product: Product }) {
+   784→  const pairs: Array<[string, string]> = [
+   785→    ["Бренд", product.brand],
+   786→    ["Категория", product.category.name],
+   787→    ["Рекомендуемый возраст", `от ${product.ageMin} ${pluralize(product.ageMin, "года", "лет", "лет")}`],
+   788→    [
+   789→      "Наличие на складе",
+   790→      `${product.stock} ${pluralize(product.stock, "штука", "штуки", "штук")}`,
+   791→    ],
+   792→    ["Артикул", product.slug],
+   793→  ];
+   794→
+   795→  return (
+   796→    <dl className="grid gap-x-12 sm:grid-cols-2">
+   797→      {pairs.map(([term, value]) => (
+   798→        <div key={term} className="flex gap-6 border-b border-gray-100 py-3">
+   799→          <dt className="w-40 shrink-0 text-gray-500">{term}</dt>
+   800→          <dd className="min-w-0 font-semibold text-gray-900">{value}</dd>
+   801→        </div>
+   802→      ))}
+   803→    </dl>
+   804→  );
+   805→}
+   806→
+   807→function ShippingBlock({ product }: { product: Product }) {
+   808→  const { toast } = useToast();
+   809→
+   810→  return (
+   811→    <div>
+   812→      <ul className="space-y-5">
+   813→        <li className="flex gap-3.5">
+   814→          <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-[#FDF4F4] text-[#CC0000]">
+   815→            <Truck className="size-5" aria-hidden="true" />
+   816→          </span>
+   817→          <div className="min-w-0">
+   818→            <p className="text-sm font-bold text-gray-900">Доставка курьером</p>
+   819→            <p className="mt-0.5 text-[13px] leading-relaxed text-gray-600">
+   820→              Бесплатно при заказе от 3 000 ₽ · 1–2 рабочих дня
+   821→            </p>
+   822→          </div>
+   823→        </li>
+   824→        <li>
+   825→          <button
+   826→            type="button"
+   827→            onClick={() =>
+   828→              toast({
+   829→                title: "В разработке",
+   830→                description: "Проверка самовывоза по вашему адресу появится совсем скоро — оставайтесь с нами!",
+   831→              })
+   832→            }
+   833→            className="flex w-full gap-3.5 rounded-lg p-1 text-left transition-colors hover:bg-[#FAFAFA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#CC0000]/30"
+   834→            aria-label="Проверить самовывоз"
+   835→          >
+   836→            <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-[#FDF4F4] text-[#CC0000]">
+   837→              <MapPin className="size-5" aria-hidden="true" />
+   838→            </span>
+   839→            <span className="min-w-0">
+   840→              <span className="block text-sm font-bold text-gray-900">Самовывоз из магазина</span>
+   841→              <span className="mt-0.5 block text-[13px] leading-relaxed text-gray-600">
+   842→                Бесплатно, готовность — от 2 часов. Проверить магазины поблизости
+   843→              </span>
+   844→            </span>
+   845→          </button>
+   846→        </li>
+   847→        <li className="flex gap-3.5">
+   848→          <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-[#FDF4F4] text-[#CC0000]">
+   849→            <Undo2 className="size-5" aria-hidden="true" />
+   850→          </span>
+   851→          <div className="min-w-0">
+   852→            <p className="text-sm font-bold text-gray-900">Лёгкий возврат</p>
+   853→            <p className="mt-0.5 text-[13px] leading-relaxed text-gray-600">
+   854→              30 дней на возврат — в магазине или почтой, с полным возмещением
+   855→            </p>
+   856→          </div>
+   857→        </li>
+   858→      </ul>
+   859→
+   860→      {/* Предупреждение (как WARNING на референсе) */}
+   861→      <p className="mt-6 flex items-start gap-2.5 text-[13px] leading-relaxed text-gray-700">
+   862→        <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" aria-hidden="true" />
+   863→        <span>
+   864→          <strong className="font-bold">ВНИМАНИЕ:</strong> содержит мелкие детали. Не подходит для детей младше{" "}
+   865→          {product.ageMin} {pluralize(product.ageMin, "года", "лет", "лет")}.
+   866→        </span>
+   867→      </p>
+   868→    </div>
+   869→  );
+   870→}
+   871→
+   872→function QaBlock({ product }: { product: Product }) {
+   873→  const { toast } = useToast();
+   874→
+   875→  const entries = [
+   876→    {
+   877→      question: "На какой возраст рассчитан этот товар?",
+   878→      answer: `Производитель рекомендует возраст от ${product.ageMin} ${pluralize(product.ageMin, "года", "лет", "лет")}. В наборе есть мелкие детали — для малышей игра проходит вместе со взрослыми.`,
+   879→    },
+   880→    {
+   881→      question: "Товар точно есть в наличии?",
+   882→      answer:
+   883→        product.stock > 0
+   884→          ? `Да, сейчас на складе ${product.stock} ${pluralize(product.stock, "штука", "штуки", "штук")}. Доставим курьером за 1–2 рабочих дня или подготовим к самовывозу уже через 2 часа.`
+   885→          : "Сейчас товар распродан. Загляните в похожие товары ниже — возможно, там есть похожая модель.",
+   886→    },
+   887→    {
+   888→      question: "Что делать, если кукла не понравится?",
+   889→      answer:
+   890→        "У вас есть 30 дней на лёгкий возврат: в магазине или почтой, с полным возмещением. Достаточно сохранить упаковку и чек.",
+   891→    },
+   892→  ];
+   893→
+   894→  return (
+   895→    <div>
+   896→      <ul className="divide-y divide-gray-100">
+   897→        {entries.map((entry) => (
+   898→          <li key={entry.question} className="py-4 first:pt-0 last:pb-0">
+   899→            <h4 className="text-sm font-bold text-gray-900">{entry.question}</h4>
+   900→            <p className="mt-1.5 text-sm leading-relaxed text-gray-600">{entry.answer}</p>
+   901→          </li>
+   902→        ))}
+   903→      </ul>
+   904→      <button
+   905→        type="button"
+   906→        onClick={() =>
+   907→          toast({
+   908→            title: "В разработке",
+   909→            description: "Возможность задать свой вопрос о товаре появится совсем скоро — оставайтесь с нами!",
+   910→          })
+   911→        }
+   912→        className="mt-5 inline-flex h-9 items-center rounded-full border border-gray-300 bg-white px-5 text-[13px] font-semibold text-gray-800 transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#CC0000]/40"
+   913→      >
+   914→        Задать вопрос о товаре
+   915→      </button>
+   916→    </div>
+   917→  );
+   918→}
+   919→

@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Based on the screenshot of the Target.com sticky header bar, here is a detailed visual specification for reproduction:\n\n## 1. Layout & Position (Left to Right)\n\nThe bar is a **full-width** fixed/sticky container at the top of the viewport containing these elements in order:\n\n- **Product Thumbnail (Left):** Small square image (~48x48px or 50x50px) showing the Monster High doll character (Cleo de Nile) with green dress, black hair, holding accessories. Has rounded corners (~4px radius).\n  \n- **Product Info Block (Center-Left):**\n  - **Breadcrumb/Category Link:** \"Shop all Monster High\" – smaller text, gray color\n  - **Product Title:** \"Monster High Dawn of the Dance Dance Cleo\" – bold, larger text, black/dark gray\n\n- **Price (Right-Center):** \"$32.99\" – right-aligned within its section, bold weight\n\n- **Quantity Selector (Right):** Horizontal stepper control with:\n  - Minus button (\"−\") in circle\n  - Number display (\"2\") \n  - Plus button (\"+\") in circle\n  - All enclosed in a pill-shaped border container\n\n## 2. Colors, Dimensions & Styling\n\n**Container Bar:**\n- **Background:** Pure white (`#FFFFFF`)\n- **Height:** Approximately **64-72px** (standard touch target height)\n- **Border:** \n  - Bottom border only: **1px solid #E0E0E0** (light gray)\n  - No top, left, or right borders (blends with page)\n- **Shadow:** Subtle **box-shadow: 0 2px 4px rgba(0,0,0,0.08)** or similar soft drop shadow for elevation\n- **Z-index:** High (likely 1000+) to float above content\n- **Padding:** ~12-16px vertical, ~16-24px horizontal\n\n**Quantity Selector Specifics:**\n- **Border:** 1.5px solid `#0078BE` (Target's signature blue) or dark gray `#333`\n- **Border-radius:** Full pill shape (~20-24px radius)\n- **Background:** White\n- **Buttons:** Circular hit areas with:\n  - Minus/Plus symbols in `#0078BE` or black\n  - Current value \"2\" in **bold**, centered, black\n  - Button width: ~32-36px each\n  - Total width: ~100-110px\n\n## 3. Text Content & Formatting\n\n**\"Shop all Monster High\":**\n- Font size: **12-13px**\n- Font weight: **Regular (400)**\n- Color: **#767676** (medium gray)\n- Text-decoration: None (or underline on hover)\n- Margin-bottom: **2-4px** from title\n\n**\"Monster High Dawn of the Dance Dance Cleo\":**\n- Font size: **14-16px** (mobile) / **16-18px** (desktop)\n- Font weight: **Bold (600-700)**\n- Color: **#333333** or **#111111** (near black)\n- Line height: **1.3-1.4**\n- Max-width: ~60% of container (truncates with ellipsis if long)\n\n**\"$32.99\":**\n- Font size: **16-18px**\n- Font weight: **Bold (700)**\n- Color: **#333333**\n- Alignment: Right-aligned or flex-end\n\n**Quantity \"2\":**\n- Font size: **16px**\n- Font weight: **Bold (700)**\n- Color: **#333333**\n\n## 4. Arrangement & Spacing\n\n**Flexbox Layout:**\n```\n[Thumbnail (48px)] --(12-16px gap)-- [Text Block (flex-1)] ----(auto margin)---- [Price] --(16-24px gap)-- [Qty Selector]\n```\n\n**Specific Spacing:**\n- **Left padding:** ~16-20px from viewport edge to thumbnail\n- **Image-to-text gap:** ~12-16px horizontal spacing\n- **Title line height:** Tight (~1.2) to keep bar compact\n- **Price-to-qty gap:** ~20-24px (generous separation)\n- **Right padding:** ~16-20px from qty selector to edge\n- **Vertical centering:** All elements are perfectly **vertically centered** (align-items: center)\n\n**Responsive Behavior:**\n- On mobile (shown), text may truncate if product name is very long\n- Quantity selector maintains minimum touch target size (44px height per button area)\n- The bar likely appears after scrolling past the initial product hero section (sticky behavior triggers at ~200-300px scroll depth)\n\n**Visual Hierarchy:** The eye flows from left (image) → center (what it is) → right (cost + purchase action), following standard e-commerce pattern language.\n\n*Note: The partial \"Add to list\" button visible at bottom suggests this sticky bar sits above another action bar or the main content continues below.*",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1791099386,
+  "id": "2026100415360609bc4d49a58c4847",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "2026100415360609bc4d49a58c4847",
+  "usage": {
+    "completion_tokens": 1077,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 308,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1385
+  }
+}
